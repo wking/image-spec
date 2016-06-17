@@ -17,84 +17,24 @@ package image
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 
+	"github.com/opencontainers/image-spec/image/cas"
+	"github.com/opencontainers/image-spec/specs-go"
 	"github.com/pkg/errors"
+	"golang.org/x/net/context"
 )
 
-type descriptor struct {
-	MediaType string `json:"mediaType"`
-	Digest    string `json:"digest"`
-	Size      int64  `json:"size"`
+func validateDescriptor(ctx context.Context, engine cas.Engine, descriptor *specs.Descriptor) error {
+	reader, err := engine.Get(ctx, descriptor.Digest)
+	if err != nil {
+		return err
+	}
+
+	return validateContent(ctx, descriptor, reader)
 }
 
-func findDescriptor(w walker, name string) (*descriptor, error) {
-	var d descriptor
-	dpath := filepath.Join("refs", name)
-
-	f := func(path string, info os.FileInfo, r io.Reader) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		if filepath.Clean(path) != dpath {
-			return nil
-		}
-
-		if err := json.NewDecoder(r).Decode(&d); err != nil {
-			return err
-		}
-
-		return errEOW
-	}
-
-	switch err := w.walk(f); err {
-	case nil:
-		return nil, fmt.Errorf("%s: descriptor not found", dpath)
-	case errEOW:
-		// found, continue below
-	default:
-		return nil, err
-	}
-
-	return &d, nil
-}
-
-func (d *descriptor) validate(w walker) error {
-	f := func(path string, info os.FileInfo, r io.Reader) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		digest, err := filepath.Rel("blobs", filepath.Clean(path))
-		if err != nil || d.Digest != digest {
-			return nil // ignore
-		}
-
-		if err := d.validateContent(r); err != nil {
-			return err
-		}
-
-		return errEOW
-	}
-
-	switch err := w.walk(f); err {
-	case nil:
-		return fmt.Errorf("%s: not found", d.Digest)
-	case errEOW:
-		// found, continue below
-	default:
-		return errors.Wrapf(err, "%s: validation failed", d.Digest)
-	}
-
-	return nil
-}
-
-func (d *descriptor) validateContent(r io.Reader) error {
+func validateContent(ctx context.Context, descriptor *specs.Descriptor, r io.Reader) error {
 	h := sha256.New()
 	n, err := io.Copy(h, r)
 	if err != nil {
@@ -103,13 +43,15 @@ func (d *descriptor) validateContent(r io.Reader) error {
 
 	digest := "sha256:" + hex.EncodeToString(h.Sum(nil))
 
-	if digest != d.Digest {
+	if digest != descriptor.Digest {
 		return errors.New("digest mismatch")
 	}
 
-	if n != d.Size {
+	if n != descriptor.Size {
 		return errors.New("size mismatch")
 	}
+
+	// FIXME: check descriptor.MediaType, when possible
 
 	return nil
 }

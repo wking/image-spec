@@ -22,11 +22,11 @@ import (
 
 	"github.com/opencontainers/image-spec/image"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/context"
 )
 
 // supported bundle types
 var bundleTypes = []string{
-	typeImageLayout,
 	typeImage,
 }
 
@@ -82,6 +82,8 @@ func (v *bundleCmd) Run(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
+	ctx := context.Background()
+
 	if v.typ == "" {
 		typ, err := autodetect(args[0])
 		if err != nil {
@@ -93,11 +95,8 @@ func (v *bundleCmd) Run(cmd *cobra.Command, args []string) {
 
 	var err error
 	switch v.typ {
-	case typeImageLayout:
-		err = image.CreateRuntimeBundleLayout(args[0], args[1], v.ref, v.root)
-
 	case typeImage:
-		err = image.CreateRuntimeBundle(args[0], args[1], v.ref, v.root)
+		err = image.CreateRuntimeBundle(ctx, args[0], args[1], v.ref, v.root)
 	}
 
 	if err != nil {

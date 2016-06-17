@@ -27,67 +27,52 @@ import (
 	"strings"
 	"time"
 
+	"github.com/opencontainers/image-spec/image/cas"
 	"github.com/opencontainers/image-spec/schema"
+	"github.com/opencontainers/image-spec/specs-go"
 	"github.com/pkg/errors"
+	"golang.org/x/net/context"
 )
 
 type manifest struct {
-	Config descriptor   `json:"config"`
-	Layers []descriptor `json:"layers"`
+	Config *specs.Descriptor  `json:"config"`
+	Layers []specs.Descriptor `json:"layers"`
 }
 
-func findManifest(w walker, d *descriptor) (*manifest, error) {
-	var m manifest
-	mpath := filepath.Join("blobs", d.Digest)
-
-	f := func(path string, info os.FileInfo, r io.Reader) error {
-		if info.IsDir() {
-			return nil
-		}
-
-		if filepath.Clean(path) != mpath {
-			return nil
-		}
-
-		buf, err := ioutil.ReadAll(r)
-		if err != nil {
-			return errors.Wrapf(err, "%s: error reading manifest", path)
-		}
-
-		if err := schema.MediaTypeManifest.Validate(bytes.NewReader(buf)); err != nil {
-			return errors.Wrapf(err, "%s: manifest validation failed", path)
-		}
-
-		if err := json.Unmarshal(buf, &m); err != nil {
-			return err
-		}
-
-		if len(m.Layers) == 0 {
-			return fmt.Errorf("%s: no layers found", path)
-		}
-
-		return errEOW
+func findManifest(ctx context.Context, engine cas.Engine, descriptor *specs.Descriptor) (*manifest, error) {
+	reader, err := engine.Get(ctx, descriptor.Digest)
+	if err != nil {
+		return nil, err
 	}
 
-	switch err := w.walk(f); err {
-	case nil:
-		return nil, fmt.Errorf("%s: manifest not found", mpath)
-	case errEOW:
-		// found, continue below
-	default:
+	buf, err := ioutil.ReadAll(reader)
+	if err != nil {
+		return nil, errors.Wrapf(err, "%s: error reading manifest", descriptor.Digest)
+	}
+
+	if err := schema.MediaTypeManifest.Validate(bytes.NewReader(buf)); err != nil {
+		return nil, errors.Wrapf(err, "%s: manifest validation failed", descriptor.Digest)
+	}
+
+	var m manifest
+	if err := json.Unmarshal(buf, &m); err != nil {
 		return nil, err
+	}
+
+	if len(m.Layers) == 0 {
+		return nil, fmt.Errorf("%s: no layers found", descriptor.Digest)
 	}
 
 	return &m, nil
 }
 
-func (m *manifest) validate(w walker) error {
-	if err := m.Config.validate(w); err != nil {
+func (m *manifest) validate(ctx context.Context, engine cas.Engine) error {
+	if err := validateDescriptor(ctx, engine, m.Config); err != nil {
 		return errors.Wrap(err, "config validation failed")
 	}
 
 	for _, d := range m.Layers {
-		if err := d.validate(w); err != nil {
+		if err := validateDescriptor(ctx, engine, &d); err != nil {
 			return errors.Wrap(err, "layer validation failed")
 		}
 	}
@@ -95,32 +80,19 @@ func (m *manifest) validate(w walker) error {
 	return nil
 }
 
-func (m *manifest) unpack(w walker, dest string) error {
+func (m *manifest) unpack(ctx context.Context, engine cas.Engine, dest string) error {
 	for _, d := range m.Layers {
 		if d.MediaType != string(schema.MediaTypeImageSerialization) {
 			continue
 		}
 
-		f := func(path string, info os.FileInfo, r io.Reader) error {
-			if info.IsDir() {
-				return nil
-			}
-
-			dd, err := filepath.Rel("blobs", filepath.Clean(path))
-			if err != nil || d.Digest != dd {
-				return nil // ignore
-			}
-
-			if err := unpackLayer(dest, r); err != nil {
-				return errors.Wrap(err, "error extracting layer")
-			}
-
-			return errEOW
+		reader, err := engine.Get(ctx, d.Digest)
+		if err != nil {
+			return err
 		}
 
-		err := w.walk(f)
-		if err != nil && err != errEOW {
-			return err
+		if err := unpackLayer(dest, reader); err != nil {
+			return errors.Wrap(err, "error extracting layer")
 		}
 	}
 
