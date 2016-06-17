@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	casLayout "github.com/opencontainers/image-spec/image/cas/layout"
+	imageLayout "github.com/opencontainers/image-spec/image/layout"
 	"github.com/opencontainers/image-spec/image/refs"
 	"github.com/opencontainers/image-spec/specs-go"
 	"golang.org/x/net/context"
@@ -35,9 +36,14 @@ type TarEngine struct {
 }
 
 // NewTarEngine returns a new TarEngine.
-func NewTarEngine(file casLayout.ReadSeekCloser) (engine refs.Engine, err error) {
-	engine = &TarEngine{
+func NewTarEngine(ctx context.Context, file casLayout.ReadWriteSeekCloser) (eng refs.Engine, err error) {
+	engine := &TarEngine{
 		file: file,
+	}
+
+	err = imageLayout.CheckTarVersion(ctx, engine.file)
+	if err != nil {
+		return nil, err
 	}
 
 	return engine, nil
