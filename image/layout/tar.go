@@ -16,11 +16,14 @@ package layout
 
 import (
 	"archive/tar"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
+	"time"
 
 	"github.com/opencontainers/image-spec/specs-go"
 	"golang.org/x/net/context"
@@ -55,6 +58,108 @@ func TarEntryByName(ctx context.Context, reader io.ReadSeeker, name string) (hea
 			return header, tarReader, nil
 		}
 	}
+}
+
+// WriteTarEntryByName reads content from reader into an entry at name
+// in the tarball at file, replacing a previous entry with that name
+// (if any).  The current implementation avoids writing a temporary
+// file to disk, but risks leaving a corrupted tarball if the program
+// crashes mid-write.
+//
+// To add an entry to a tarball (with Go's interface) you need to know
+// the size ahead of time.  If you set the size argument,
+// WriteTarEntryByName will use that size in the entry header (and
+// Go's implementation will check to make sure it matches the length
+// of content read from reader).  If unset, WriteTarEntryByName will
+// copy reader into a local buffer, measure its size, and then write
+// the entry header and content.
+func WriteTarEntryByName(ctx context.Context, file io.ReadWriteSeeker, name string, reader io.Reader, size *int64) (err error) {
+	var buffer bytes.Buffer
+	tarWriter := tar.NewWriter(&buffer)
+
+	_, err = file.Seek(0, os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+
+	tarReader := tar.NewReader(file)
+	found := false
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			return err
+		}
+
+		if header.Name == name {
+			found = true
+			err = writeTarEntry(ctx, tarWriter, name, reader, size)
+		} else {
+			err = tarWriter.WriteHeader(header)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(tarWriter, tarReader)
+		}
+		if err != nil {
+			return err
+		}
+	}
+
+	if !found {
+		err = writeTarEntry(ctx, tarWriter, name, reader, size)
+		if err != nil {
+			return err
+		}
+	}
+
+	err = tarWriter.Close()
+	if err != nil {
+		return err
+	}
+
+	_, err = file.Seek(0, os.SEEK_SET)
+	if err != nil {
+		return err
+	}
+	// FIXME: truncate file
+
+	_, err = buffer.WriteTo(file)
+	return err
+}
+
+func writeTarEntry(ctx context.Context, writer *tar.Writer, name string, reader io.Reader, size *int64) (err error) {
+	if size == nil {
+		data, err := ioutil.ReadAll(reader)
+		if err != nil {
+			return err
+		}
+		reader = bytes.NewReader(data)
+		_size := int64(len(data))
+		size = &_size
+	}
+	now := time.Now()
+	header := &tar.Header{
+		Name:     name,
+		Mode:     0666,
+		Size:     *size,
+		ModTime:  now,
+		Typeflag: tar.TypeReg,
+	}
+	err = writer.WriteHeader(header)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.Copy(writer, reader)
+	return err
 }
 
 // CheckTarVersion walks a tarball pointed to by reader and returns an
