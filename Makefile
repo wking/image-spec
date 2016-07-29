@@ -75,6 +75,9 @@ validate-examples:
 oci-image-tool:
 	go build ./cmd/oci-image-tool
 
+example: cmd/example/main.go
+	go build ./cmd/example
+
 schema-fs:
 	@echo "generating schema fs"
 	@cd schema && printf "%s\n\n%s\n" "$$(cat ../.header)" "$$(go generate)" > fs.go
