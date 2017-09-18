@@ -29,7 +29,7 @@ This specification defines the following annotation keys, intended for but not l
 * **org.opencontainers.image.vendor** Name of the distributing entity, organization or individual.
 * **org.opencontainers.image.licenses** License(s) under which contained software is distributed as an [SPDX License Expression][spdx-license-expression].
 * **org.opencontainers.image.ref.name** Name of the reference for a target (string).
-  * SHOULD only be considered valid when on descriptors on `index.json` within [image layout](image-layout.md).
+  * SHOULD only be considered valid when on descriptors used for [reference resolution][ref-engines].
   * Character set of the value SHOULD conform to alphanum of `A-Za-z0-9` and separator set of `-._:@/+`
   * The reference must match the following [grammar](considerations.md#ebnf):
     ```
@@ -64,4 +64,5 @@ While users are encouraged to use the **org.opencontainers.image** keys, tools M
 | | `schema-version`| No equivalent in the OCI Image Spec |
 | | `docker.*`, `rkt.*` | No equivalent in the OCI Image Spec |
 
+[ref-engines]: https://github.com/xiekeyang/oci-discovery/blob/44ec3cf3113e29a743ad04220ccb7ff5197dab2a/ref-engine-protocols.md
 [spdx-license-expression]: https://spdx.org/spdx-specification-21-web-version#h.jxpfx0ykyb60
